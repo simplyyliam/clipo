@@ -7,6 +7,8 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, State};
 
+use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use crate::clipboard::write::{self, TextMode};
 use crate::history::{ClipView, SourceApp};
 use crate::platform::app as platform_app;
@@ -176,14 +178,40 @@ pub fn get_settings(state: State<'_, Arc<AppState>>) -> Settings {
 
 #[tauri::command]
 pub fn update_settings(
+    app: AppHandle,
     state: State<'_, Arc<AppState>>,
     settings: Settings,
 ) -> Result<Settings, String> {
     let sanitized = settings.sanitized();
+    let prev_shortcut = state.settings().shortcut;
     {
         let mut current = state.settings.lock();
         *current = sanitized.clone();
         let _ = current.save(&state.paths.settings);
+    }
+
+    // Update global shortcut if changed
+    if prev_shortcut != sanitized.shortcut {
+        if let Ok(old_sc) = prev_shortcut.parse::<Shortcut>() {
+            let _ = app.global_shortcut().unregister(old_sc);
+        }
+        if let Ok(new_sc) = sanitized.shortcut.parse::<Shortcut>() {
+            let app_handle = app.clone();
+            let state_clone = Arc::clone(&state);
+            let _ = app.global_shortcut().on_shortcut(new_sc, move |_app, _shortcut, event| {
+                if event.state() == ShortcutState::Pressed {
+                    windowing::toggle_popover(&app_handle, &state_clone);
+                }
+            });
+        }
+    }
+
+    // Update Windows autostart if configured
+    let autostart_manager = app.autolaunch();
+    if sanitized.launch_at_startup {
+        let _ = autostart_manager.enable();
+    } else {
+        let _ = autostart_manager.disable();
     }
 
     // Apply limit to history if reduced
