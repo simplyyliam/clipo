@@ -70,6 +70,19 @@ pub fn setup_popover_events(window: &WebviewWindow) {
     window.on_window_event(move |event| {
         if let tauri::WindowEvent::Focused(focused) = event {
             if !focused {
+                // Check if the current foreground window is part of our own process or window.
+                // During dragging on Windows (WM_SYSCOMMAND / DefWindowProc modal drag loop),
+                // Windows can report Focused(false) even while the mouse is active on the window.
+                let fg = platform_app::foreground_window();
+                let our_hwnd = window_clone.hwnd().ok().map(|h| h.0 as isize);
+
+                if let (Some(fg_hwnd), Some(my_hwnd)) = (fg, our_hwnd) {
+                    if fg_hwnd == my_hwnd {
+                        // Focus didn't actually switch to another external application
+                        return;
+                    }
+                }
+
                 let _ = window_clone.hide();
             }
         }
